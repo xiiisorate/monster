@@ -17,10 +17,19 @@ if command -v x-ui &> /dev/null; then
     # Тихое удаление x-ui (если установлен через официальный скрипт)
     /usr/local/x-ui/x-ui uninstall -y &>/dev/null || true
     rm -rf /usr/local/x-ui /etc/x-ui /usr/bin/x-ui /etc/systemd/system/x-ui.service
+    
+    # Удаление сервера подписки
+    systemctl stop vless-subscription 2>/dev/null || true
+    systemctl disable vless-subscription 2>/dev/null || true
+    rm -f /etc/systemd/system/vless-subscription.service
+    rm -f /usr/local/bin/vless-subscription-server.py
+    rm -f /root/vless_subscription.txt
+    rm -f /root/vless_subscription_name.txt
+    
     systemctl daemon-reexec
     systemctl daemon-reload
-    rm /root/3x-ui.txt
-    echo "x-ui успешно удалена. Продолжаем выполнение скрипта..."
+    rm -f /root/3x-ui.txt
+    echo "x-ui и сервер подписки успешно удалены. Продолжаем выполнение скрипта..."
 fi
 
 # Вывод всех команд кроме диалога — в лог
@@ -91,6 +100,25 @@ else
         echo -e "${yellow}Введенный путь был очищен от недопустимых символов. Используется случайный путь: ${USER_WEBPATH}${plain}" >&3
     else
         echo -e "${green}Путь панели установлен: ${USER_WEBPATH}${plain}" >&3
+    fi
+fi
+
+# Запрос названия сервера
+printf '\033[0;33mВведите название сервера (для подписки и инбаундов, например: "МойСервер"): \033[0m' > /dev/tty
+read -r SERVER_NAME < /dev/tty
+echo -e "" >&3  # Переход на новую строку
+if [[ -z "$SERVER_NAME" ]]; then
+    SERVER_NAME="VPN-Server"
+    echo -e "${green}Используется название по умолчанию: ${SERVER_NAME}${plain}" >&3
+else
+    # Очищаем название от недопустимых символов для использования в файлах и URL
+    SAFE_SERVER_NAME=$(echo "$SERVER_NAME" | tr -cd 'a-zA-Z0-9_-' | head -c 50)
+    if [[ -z "$SAFE_SERVER_NAME" ]]; then
+        SERVER_NAME="VPN-Server"
+        echo -e "${yellow}Введенное название было очищено от недопустимых символов. Используется: ${SERVER_NAME}${plain}" >&3
+    else
+        SERVER_NAME="$SAFE_SERVER_NAME"
+        echo -e "${green}Название сервера установлено: ${SERVER_NAME}${plain}" >&3
     fi
 fi
 
@@ -288,8 +316,9 @@ for domain in "${DOMAINS[@]}"; do
       enable: true
     }]' "$CLIENTS_TEMP" > "${CLIENTS_TEMP}.tmp" && mv "${CLIENTS_TEMP}.tmp" "$CLIENTS_TEMP"
     
-    # Формируем VLESS ссылку для этого клиента
-    VLESS_LINK="vless://${CURRENT_UUID}@${SERVER_IP}:443?type=tcp&security=reality&encryption=none&flow=xtls-rprx-vision&sni=${domain}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&spx=%2F#${domain}"
+    # Формируем VLESS ссылку для этого клиента с названием сервера
+    COMMENT="${SERVER_NAME}-${domain}"
+    VLESS_LINK="vless://${CURRENT_UUID}@${SERVER_IP}:443?type=tcp&security=reality&encryption=none&flow=xtls-rprx-vision&sni=${domain}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&spx=%2F#${COMMENT}"
     VLESS_LINKS+=("$VLESS_LINK")
     
     DOMAIN_COUNT=$((DOMAIN_COUNT + 1))
@@ -333,7 +362,7 @@ SNIFFING_JSON=$(jq -nc '{
 }')
 
 # Отправка инбаунда через API
-REMARK="reality443-all-domains-${#DOMAINS[@]}"
+REMARK="${SERVER_NAME}-all-domains-${#DOMAINS[@]}"
 echo -e "${green}Отправка инбаунда с ${#DOMAINS[@]} доменами и ${DOMAIN_COUNT} клиентами...${plain}" >&3
 
 ADD_RESULT=$(curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${WEBPATH}/panel/api/inbounds/add" \
@@ -429,6 +458,9 @@ if [[ $SUCCESS_COUNT -gt 0 ]]; then
             SUBSCRIPTION_PORT=8888
             SUBSCRIPTION_SCRIPT="/usr/local/bin/vless-subscription-server.py"
             
+            # Сохраняем название сервера в файл для Python скрипта
+            echo "$SERVER_NAME" > /root/vless_subscription_name.txt
+            
             # Создаем Python скрипт для HTTP сервера
             cat > "$SUBSCRIPTION_SCRIPT" << 'PYTHON_EOF'
 #!/usr/bin/env python3
@@ -437,9 +469,22 @@ import socketserver
 import base64
 import os
 import sys
+import urllib.parse
 
 SUBSCRIPTION_FILE = "/root/vless_subscription.txt"
+SERVER_NAME_FILE = "/root/vless_subscription_name.txt"
 PORT = 8888
+
+def get_server_name():
+    """Читает название сервера из файла"""
+    try:
+        if os.path.exists(SERVER_NAME_FILE):
+            with open(SERVER_NAME_FILE, 'r') as f:
+                name = f.read().strip()
+                return name if name else "VPN-Server"
+    except:
+        pass
+    return "VPN-Server"
 
 class SubscriptionHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
@@ -456,10 +501,20 @@ class SubscriptionHandler(http.server.SimpleHTTPRequestHandler):
                     # Кодируем в base64
                     subscription_base64 = base64.b64encode(subscription_content.encode('utf-8')).decode('utf-8')
                     
+                    # Получаем название сервера
+                    server_name = get_server_name()
+                    # URL-кодируем название для использования в заголовке
+                    server_name_encoded = urllib.parse.quote(server_name)
+                    
+                    # Формируем заголовок Subscription-Userinfo с названием
+                    # Формат: upload=0; download=0; total=0; expire=0; remark=Название
+                    subscription_userinfo = f"upload=0; download=0; total=0; expire=0; remark={server_name_encoded}"
+                    
                     # Отправляем ответ
                     self.send_response(200)
                     self.send_header('Content-type', 'text/plain; charset=utf-8')
                     self.send_header('Content-Length', str(len(subscription_base64)))
+                    self.send_header('Subscription-Userinfo', subscription_userinfo)
                     self.end_headers()
                     self.wfile.write(subscription_base64.encode('utf-8'))
                 else:
