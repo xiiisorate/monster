@@ -222,22 +222,64 @@ WHITELIST_TEMP=$(mktemp)
 
 echo -e "${green}Скачивание списка доменов из whitelist...${plain}" >&3
 
+# Дополнительные популярные домены для SNI (если whitelist не сработает или для расширения списка)
+ADDITIONAL_DOMAINS=(
+    "www.microsoft.com"
+    "www.cloudflare.com"
+    "www.github.com"
+    "www.amazon.com"
+    "www.adobe.com"
+    "www.apple.com"
+    "www.facebook.com"
+    "www.twitter.com"
+    "www.instagram.com"
+    "www.linkedin.com"
+    "www.reddit.com"
+    "www.wikipedia.org"
+    "www.stackoverflow.com"
+    "www.netflix.com"
+    "www.discord.com"
+    "www.spotify.com"
+    "www.twitch.tv"
+    "www.youtube.com"
+    "www.google.com"
+    "www.googletagmanager.com"
+    "cdn.jsdelivr.net"
+    "unpkg.com"
+    "cdnjs.cloudflare.com"
+    "fonts.googleapis.com"
+    "fonts.gstatic.com"
+)
+
+DOMAINS=()
+
 if curl -s -f "$WHITELIST_URL" -o "$WHITELIST_TEMP"; then
     echo -e "${green}Список доменов успешно скачан.${plain}" >&3
     
     # Парсим домены из файла (разделены пробелами и переносами строк)
-    DOMAINS=($(cat "$WHITELIST_TEMP" | tr ' ' '\n' | grep -v '^$' | grep -E '^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'))
+    WHITELIST_DOMAINS=($(cat "$WHITELIST_TEMP" | tr ' ' '\n' | grep -v '^$' | grep -E '^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'))
+    
+    DOMAINS=("${WHITELIST_DOMAINS[@]}")
     
     DOMAIN_COUNT=${#DOMAINS[@]}
-    echo -e "${green}Найдено доменов: ${DOMAIN_COUNT}${plain}" >&3
+    echo -e "${green}Найдено доменов в whitelist: ${DOMAIN_COUNT}${plain}" >&3
     
     if [[ $DOMAIN_COUNT -eq 0 ]]; then
-        echo -e "${red}Не удалось распарсить домены. Используем web.max.ru по умолчанию.${plain}" >&3
-        DOMAINS=("web.max.ru")
+        echo -e "${yellow}Whitelist пуст или не распарсился. Используем дополнительные популярные домены.${plain}" >&3
+        DOMAINS=("${ADDITIONAL_DOMAINS[@]}")
+        DOMAIN_COUNT=${#DOMAINS[@]}
+        echo -e "${green}Используется ${DOMAIN_COUNT} дополнительных доменов.${plain}" >&3
+    else
+        # Добавляем дополнительные домены к whitelist
+        DOMAINS+=("${ADDITIONAL_DOMAINS[@]}")
+        DOMAIN_COUNT=${#DOMAINS[@]}
+        echo -e "${green}Используются домены из whitelist + ${#ADDITIONAL_DOMAINS[@]} дополнительных (всего: ${DOMAIN_COUNT}).${plain}" >&3
     fi
 else
-    echo -e "${yellow}Не удалось скачать список доменов. Используем web.max.ru по умолчанию.${plain}" >&3
-    DOMAINS=("web.max.ru")
+    echo -e "${yellow}Не удалось скачать список доменов. Используем дополнительные популярные домены.${plain}" >&3
+    DOMAINS=("${ADDITIONAL_DOMAINS[@]}")
+    DOMAIN_COUNT=${#DOMAINS[@]}
+    echo -e "${green}Используется ${DOMAIN_COUNT} дополнительных доменов.${plain}" >&3
 fi
 
 rm -f "$WHITELIST_TEMP"
