@@ -158,27 +158,27 @@ ARCH=$(arch)
 case "${release}" in
     ubuntu | debian | armbian)
         apt-get update > /dev/null 2>&1
-        apt-get install -y -q wget curl tar tzdata jq xxd qrencode python3 > /dev/null 2>&1
+        apt-get install -y -q wget curl tar tzdata jq xxd qrencode > /dev/null 2>&1
         ;;
     centos | rhel | almalinux | rocky | ol)
         yum -y update > /dev/null 2>&1
-        yum install -y -q wget curl tar tzdata jq xxd qrencode python3 > /dev/null 2>&1
+        yum install -y -q wget curl tar tzdata jq xxd qrencode > /dev/null 2>&1
         ;;
     fedora | amzn | virtuozzo)
         dnf -y update > /dev/null 2>&1
-        dnf install -y -q wget curl tar tzdata jq xxd qrencode python3 > /dev/null 2>&1
+        dnf install -y -q wget curl tar tzdata jq xxd qrencode > /dev/null 2>&1
         ;;
     arch | manjaro | parch)
         pacman -Syu --noconfirm > /dev/null 2>&1
-        pacman -S --noconfirm wget curl tar tzdata jq xxd qrencode python > /dev/null 2>&1
+        pacman -S --noconfirm wget curl tar tzdata jq xxd qrencode > /dev/null 2>&1
         ;;
     opensuse-tumbleweed)
         zypper refresh > /dev/null 2>&1
-        zypper install -y wget curl tar timezone jq xxd qrencode python3 > /dev/null 2>&1
+        zypper install -y wget curl tar timezone jq xxd qrencode > /dev/null 2>&1
         ;;
     *)
         apt-get update > /dev/null 2>&1
-        apt-get install -y wget curl tar tzdata jq xxd qrencode python3 > /dev/null 2>&1
+        apt-get install -y wget curl tar tzdata jq xxd qrencode > /dev/null 2>&1
         ;;
 esac
 
@@ -400,7 +400,6 @@ if [[ $SUCCESS_COUNT -gt 0 ]]; then
         echo -e ""
         
         # Сохраняем все ссылки в файл
-        SUBSCRIPTION_FILE="/root/vless_subscription.txt"
         if [[ ${#VLESS_LINKS[@]} -gt 0 ]]; then
             {
             echo ""
@@ -410,11 +409,8 @@ if [[ $SUCCESS_COUNT -gt 0 ]]; then
             echo ""
             } >> /root/3x-ui.txt
             
-            # Сохраняем ссылки для подписки (по одной на строку)
-            > "$SUBSCRIPTION_FILE"
             for i in "${!VLESS_LINKS[@]}"; do
                 echo "${VLESS_LINKS[$i]}" >> /root/3x-ui.txt
-                echo "${VLESS_LINKS[$i]}" >> "$SUBSCRIPTION_FILE"
             done
             
             echo "" >> /root/3x-ui.txt
@@ -422,130 +418,6 @@ if [[ $SUCCESS_COUNT -gt 0 ]]; then
             echo "" >> /root/3x-ui.txt
             
             echo -e "${green}Все ${#VLESS_LINKS[@]} VLESS ссылок сохранены в /root/3x-ui.txt${plain}" >&3
-            
-            # === Создание HTTP сервера для подписки ===
-            echo -e "${green}Настройка сервера подписки...${plain}" >&3
-            
-            SUBSCRIPTION_PORT=8888
-            SUBSCRIPTION_SCRIPT="/usr/local/bin/vless-subscription-server.py"
-            
-            # Создаем Python скрипт для HTTP сервера
-            cat > "$SUBSCRIPTION_SCRIPT" << 'PYTHON_EOF'
-#!/usr/bin/env python3
-import http.server
-import socketserver
-import base64
-import os
-import sys
-
-SUBSCRIPTION_FILE = "/root/vless_subscription.txt"
-PORT = 8888
-
-class SubscriptionHandler(http.server.SimpleHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == '/subscribe' or self.path == '/sub':
-            try:
-                # Читаем файл с подпиской
-                if os.path.exists(SUBSCRIPTION_FILE):
-                    with open(SUBSCRIPTION_FILE, 'r') as f:
-                        links = [line.strip() for line in f if line.strip()]
-                    
-                    # Объединяем ссылки через перенос строки
-                    subscription_content = '\n'.join(links)
-                    
-                    # Кодируем в base64
-                    subscription_base64 = base64.b64encode(subscription_content.encode('utf-8')).decode('utf-8')
-                    
-                    # Отправляем ответ
-                    self.send_response(200)
-                    self.send_header('Content-type', 'text/plain; charset=utf-8')
-                    self.send_header('Content-Length', str(len(subscription_base64)))
-                    self.end_headers()
-                    self.wfile.write(subscription_base64.encode('utf-8'))
-                else:
-                    self.send_response(404)
-                    self.end_headers()
-                    self.wfile.write(b'Subscription file not found')
-            except Exception as e:
-                self.send_response(500)
-                self.end_headers()
-                self.wfile.write(f'Error: {str(e)}'.encode('utf-8'))
-        else:
-            self.send_response(404)
-            self.end_headers()
-            self.wfile.write(b'Not Found')
-    
-    def log_message(self, format, *args):
-        # Отключаем логирование для уменьшения нагрузки
-        pass
-
-if __name__ == "__main__":
-    with socketserver.TCPServer(("", PORT), SubscriptionHandler) as httpd:
-        httpd.serve_forever()
-PYTHON_EOF
-            
-            chmod +x "$SUBSCRIPTION_SCRIPT"
-            
-            # Проверяем наличие Python
-            if command -v python3 &> /dev/null; then
-                # Создаем systemd service для подписки
-                SERVICE_FILE="/etc/systemd/system/vless-subscription.service"
-                cat > "$SERVICE_FILE" << EOF
-[Unit]
-Description=VLESS Subscription Server
-After=network.target
-
-[Service]
-Type=simple
-User=root
-ExecStart=/usr/bin/python3 $SUBSCRIPTION_SCRIPT
-Restart=always
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-EOF
-                
-                # Перезагружаем systemd и запускаем сервис
-                systemctl daemon-reload >>"$LOG_FILE" 2>&1
-                systemctl stop vless-subscription 2>/dev/null
-                systemctl enable vless-subscription >>"$LOG_FILE" 2>&1
-                systemctl start vless-subscription >>"$LOG_FILE" 2>&1
-                
-                # Проверяем что сервис запустился
-                sleep 2
-                if systemctl is-active --quiet vless-subscription; then
-                    SUBSCRIPTION_URL="http://${PANEL_ADDRESS}:${SUBSCRIPTION_PORT}/subscribe"
-                    
-                    echo -e "${green}✓ Сервер подписки запущен!${plain}" >&3
-                    echo -e "${green}Ссылка на подписку:${plain}" >&3
-                    echo -e "${yellow}${SUBSCRIPTION_URL}${plain}" >&3
-                    echo -e ""
-                    
-                    {
-                    echo ""
-                    echo "═══════════════════════════════════════════════════════════"
-                    echo "ССЫЛКА НА ПОДПИСКУ"
-                    echo "═══════════════════════════════════════════════════════════"
-                    echo ""
-                    echo "Используйте эту ссылку в прокси-приложениях для автоматического получения всех конфигов:"
-                    echo ""
-                    echo "$SUBSCRIPTION_URL"
-                    echo ""
-                    echo "Эта подписка обновляется автоматически и содержит все ${#VLESS_LINKS[@]} конфигов."
-                    echo ""
-                    echo "═══════════════════════════════════════════════════════════"
-                    echo ""
-                    } >> /root/3x-ui.txt
-                else
-                    echo -e "${yellow}⚠ Не удалось запустить сервер подписки автоматически.${plain}" >&3
-                    echo -e "${yellow}Можно запустить вручную: systemctl start vless-subscription${plain}" >&3
-                fi
-            else
-                echo -e "${yellow}⚠ Python3 не найден. Сервер подписки не будет создан.${plain}" >&3
-            fi
         fi
         
         echo -e "${yellow}Примечание: Все ссылки для каждого домена доступны в панели управления x-ui.${plain}" >&3
@@ -588,16 +460,6 @@ echo -e "\n\033[1;32mПанель управления 3X-UI (https://github.com
 echo -e "Адрес панели: \033[1;36mhttp://${PANEL_ADDRESS}:${PORT}/${WEBPATH}\033[0m" >&3
 echo -e "Логин:        \033[1;33m${USERNAME}\033[0m" >&3
 echo -e "Пароль:       \033[1;33m${PASSWORD}\033[0m" >&3
-
-# Проверяем наличие ссылки на подписку
-if [[ -f /root/3x-ui.txt ]] && grep -q "ССЫЛКА НА ПОДПИСКУ" /root/3x-ui.txt 2>/dev/null; then
-    SUBSCRIPTION_URL_SAVED=$(grep -A 5 "ССЫЛКА НА ПОДПИСКУ" /root/3x-ui.txt | grep "http://" | head -1 | sed 's/^[[:space:]]*//')
-    if [[ -n "$SUBSCRIPTION_URL_SAVED" ]]; then
-        echo -e "\n\033[1;32mСсылка на подписку (для добавления в прокси-приложения):\033[0m" >&3
-        echo -e "\033[1;36m${SUBSCRIPTION_URL_SAVED}\033[0m" >&3
-        echo -e "\033[0;33mИспользуйте эту ссылку в прокси-приложениях для автоматического получения всех конфигов.${plain}" >&3
-    fi
-fi
 
 echo -e "\nИнструкции по настройке VPN приложений вы сможете найти здесь:" >&3
 echo -e "\033[1;34mhttps://wiki.yukikras.net/ru/nastroikavpn\033[0m" >&3
