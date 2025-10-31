@@ -468,23 +468,9 @@ import http.server
 import socketserver
 import base64
 import os
-import sys
-import urllib.parse
 
 SUBSCRIPTION_FILE = "/root/vless_subscription.txt"
-SERVER_NAME_FILE = "/root/vless_subscription_name.txt"
 PORT = 8888
-
-def get_server_name():
-    """Читает название сервера из файла"""
-    try:
-        if os.path.exists(SERVER_NAME_FILE):
-            with open(SERVER_NAME_FILE, 'r') as f:
-                name = f.read().strip()
-                return name if name else "VPN-Server"
-    except:
-        pass
-    return "VPN-Server"
 
 class SubscriptionHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
@@ -501,20 +487,12 @@ class SubscriptionHandler(http.server.SimpleHTTPRequestHandler):
                     # Кодируем в base64
                     subscription_base64 = base64.b64encode(subscription_content.encode('utf-8')).decode('utf-8')
                     
-                    # Получаем название сервера
-                    server_name = get_server_name()
-                    # URL-кодируем название для использования в заголовке
-                    server_name_encoded = urllib.parse.quote(server_name)
-                    
-                    # Формируем заголовок Subscription-Userinfo с названием
-                    # Формат: upload=0; download=0; total=0; expire=0; remark=Название
-                    subscription_userinfo = f"upload=0; download=0; total=0; expire=0; remark={server_name_encoded}"
-                    
                     # Отправляем ответ
+                    # Не используем Subscription-Userinfo для максимальной совместимости с клиентами
+                    # Название сервера уже присутствует в комментарии каждой ссылки (#SERVER_NAME-SNI)
                     self.send_response(200)
                     self.send_header('Content-type', 'text/plain; charset=utf-8')
                     self.send_header('Content-Length', str(len(subscription_base64)))
-                    self.send_header('Subscription-Userinfo', subscription_userinfo)
                     self.end_headers()
                     self.wfile.write(subscription_base64.encode('utf-8'))
                 else:
